@@ -84,11 +84,20 @@ def plot_stats_dual_axis(stats_df, interval):
 def cal_data(stock_name, country='US', interval='monthly'):
     """
     주어진 종목 데이터를 기반으로 월별 또는 월중(15일) 및 월말 통계량 계산 및 그래프 출력.
+    
+    Parameters:
+    - stock_name: str, 종목 이름
+    - country: str, 국가 (기본값: 'US')
+    - interval: str, 데이터 주기 ('monthly', 'semi_monthly')
+    
+    Returns:
+    - tuple: (통계량이 포함된 DataFrame, 그래프 이미지)
     """
     if interval == 'monthly':
         df_monthly = cal_increase(stock_name, country=country, interval='monthly')
         if df_monthly is None:
             return None, None
+
         df_monthly['Month'] = df_monthly['Date'].dt.month
         monthly_stats = df_monthly.groupby('Month')['Increase'].agg(
             Max='max',
@@ -103,9 +112,50 @@ def cal_data(stock_name, country='US', interval='monthly'):
         positive_counts = df_monthly[df_monthly['Increase'] > 0].groupby('Month')['Increase'].count()
         monthly_stats = monthly_stats.join(positive_counts.rename('Increase Count')).fillna(0).reset_index()
         monthly_stats['Increase Count'] = monthly_stats['Increase Count'].astype(int)
+
         graph_image = plot_stats_dual_axis(monthly_stats, interval='monthly')
         return monthly_stats, graph_image
+
+    elif interval == 'semi_monthly':
+        df_semi_monthly = cal_increase(stock_name, country=country, interval='semi_monthly')
+        if df_semi_monthly is None:
+            return None, None
+
+        df_semi_monthly['Increase'] = df_semi_monthly['Increase'].clip(
+            lower=df_semi_monthly['Increase'].mean() - 1.96 * df_semi_monthly['Increase'].std(),
+            upper=df_semi_monthly['Increase'].mean() + 1.96 * df_semi_monthly['Increase'].std()
+        )
+
+        df_semi_monthly['Period'] = df_semi_monthly['Date'].dt.day.apply(
+            lambda x: 'Mid' if x < 20 else 'End'
+        )
+        df_semi_monthly['Month'] = df_semi_monthly['Date'].dt.month
+        df_semi_monthly['Month-Period'] = df_semi_monthly['Month'].astype(str) + '-' + df_semi_monthly['Period']
+
+        semi_monthly_stats = df_semi_monthly.groupby('Month-Period')['Increase'].agg(
+            Max='max',
+            Min='min',
+            Median='median',
+            Mean='mean',
+            Std='std',
+            Variance='var',
+            Q1=lambda x: x.quantile(0.25),
+            Q3=lambda x: x.quantile(0.75),
+        )
+        positive_counts = df_semi_monthly[df_semi_monthly['Increase'] > 0].groupby('Month-Period')['Increase'].count()
+        semi_monthly_stats = semi_monthly_stats.join(positive_counts.rename('Increase Count')).fillna(0).reset_index()
+        semi_monthly_stats['Increase Count'] = semi_monthly_stats['Increase Count'].astype(int)
+
+        semi_monthly_stats['Sort_Key'] = semi_monthly_stats['Month-Period'].apply(
+            lambda x: (int(x.split('-')[0]), 1 if x.split('-')[1] == 'Mid' else 2)
+        )
+        semi_monthly_stats = semi_monthly_stats.sort_values('Sort_Key').drop(columns=['Sort_Key']).reset_index(drop=True)
+
+        graph_image = plot_stats_dual_axis(semi_monthly_stats, interval='semi_monthly')
+        return semi_monthly_stats, graph_image
+
     return None, None
+
 
 def predict_increase(stock_name, country='US', interval='monthly'):
     """SARIMA 모델을 사용해 증감률 예측"""
